@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify, render_template
 import sqlite3
 import hashlib
 import re
+import os
 from pathlib import Path
 from difflib import SequenceMatcher
 
@@ -11,61 +12,130 @@ app = Flask(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "dataguard.db"
 
+# PostgreSQL on Render, SQLite locally
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# =====================================
+
+# ==========================================
 # DATABASE CONNECTION
-# =====================================
+# ==========================================
 
 def get_db():
+
+    if DATABASE_URL:
+        import psycopg2
+        from psycopg2.extras import DictCursor
+
+        url = DATABASE_URL.replace(
+            "postgres://", "postgresql://", 1
+        )
+
+        conn = psycopg2.connect(
+            url,
+            cursor_factory=DictCursor,
+            sslmode="require"
+        )
+
+        return conn
+
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+
     return conn
 
 
-# =====================================
+def execute_query(conn, query, params=()):
+
+    cursor = conn.cursor()
+
+    if DATABASE_URL:
+        query = query.replace("?", "%s")
+
+    cursor.execute(query, params)
+
+    return cursor
+
+
+# ==========================================
 # DATABASE INITIALIZATION
-# =====================================
+# ==========================================
 
 def initialize_database():
 
-    with get_db() as conn:
+    conn = get_db()
 
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                category TEXT NOT NULL,
-                description TEXT NOT NULL,
-                fingerprint TEXT UNIQUE NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+    try:
 
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS activity (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_type TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        if DATABASE_URL:
+
+            execute_query(conn, """
+                CREATE TABLE IF NOT EXISTS records (
+                    id SERIAL PRIMARY KEY,
+                    title VARCHAR(200) NOT NULL,
+                    category VARCHAR(100) NOT NULL,
+                    description TEXT NOT NULL,
+                    fingerprint VARCHAR(64) UNIQUE NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            execute_query(conn, """
+                CREATE TABLE IF NOT EXISTS activity (
+                    id SERIAL PRIMARY KEY,
+                    event_type VARCHAR(50) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+        else:
+
+            execute_query(conn, """
+                CREATE TABLE IF NOT EXISTS records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    fingerprint TEXT UNIQUE NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            execute_query(conn, """
+                CREATE TABLE IF NOT EXISTS activity (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
 
 
-# =====================================
-# DATA NORMALIZATION
-# =====================================
+# ==========================================
+# NORMALIZE DATA
+# ==========================================
 
 def normalize(value):
 
     value = value.lower().strip()
+
     value = re.sub(r"\s+", " ", value)
+
     value = re.sub(r"[^\w\s]", "", value)
 
     return value
 
 
-# =====================================
-# GENERATE UNIQUE FINGERPRINT
-# =====================================
+# ==========================================
+# GENERATE DATA FINGERPRINT
+# ==========================================
 
 def generate_fingerprint(title, category, description):
 
@@ -80,46 +150,47 @@ def generate_fingerprint(title, category, description):
     ).hexdigest()
 
 
-# =====================================
+# ==========================================
 # DATA VALIDATION
-# =====================================
+# ==========================================
 
 def validate_data(title, category, description):
 
     if not title or not category or not description:
+
         return False, "All fields are required."
 
     if len(title) < 3 or len(title) > 200:
+
         return False, "Title must contain 3-200 characters."
 
     if len(category) > 100:
+
         return False, "Category must be below 100 characters."
 
     if len(description) > 5000:
+
         return False, "Description is too long."
 
     return True, "Validation successful."
 
 
-# =====================================
+# ==========================================
 # SIMILARITY DETECTION
-# =====================================
+# ==========================================
 
 def similarity(value1, value2):
 
-    value1 = normalize(value1)
-    value2 = normalize(value2)
-
     return SequenceMatcher(
         None,
-        value1,
-        value2
+        normalize(value1),
+        normalize(value2)
     ).ratio()
 
 
-# =====================================
+# ==========================================
 # CONVERT DATABASE ROW TO JSON
-# =====================================
+# ==========================================
 
 def record_dict(record):
 
@@ -128,13 +199,13 @@ def record_dict(record):
         "title": record["title"],
         "category": record["category"],
         "description": record["description"],
-        "created_at": record["created_at"]
+        "created_at": str(record["created_at"])
     }
 
 
-# =====================================
+# ==========================================
 # HOME PAGE
-# =====================================
+# ==========================================
 
 @app.route("/")
 def home():
@@ -142,61 +213,113 @@ def home():
     return render_template("index.html")
 
 
-# =====================================
+# ==========================================
+# DATABASE HEALTH CHECK
+# ==========================================
+
+@app.route("/api/health")
+def health():
+
+    conn = get_db()
+
+    try:
+
+        execute_query(conn, "SELECT 1")
+
+        return jsonify({
+            "status": "healthy",
+            "database": (
+                "PostgreSQL" if DATABASE_URL else "SQLite"
+            )
+        })
+
+    finally:
+        conn.close()
+
+
+# ==========================================
 # DASHBOARD STATISTICS
-# =====================================
+# ==========================================
 
 @app.route("/api/stats")
 def stats():
 
-    with get_db() as conn:
+    conn = get_db()
 
-        total = conn.execute(
+    try:
+
+        total = execute_query(
+            conn,
             "SELECT COUNT(*) FROM records"
         ).fetchone()[0]
 
-        duplicates = conn.execute("""
+        duplicates = execute_query(
+            conn,
+            """
             SELECT COUNT(*) FROM activity
-            WHERE event_type = 'duplicate'
-        """).fetchone()[0]
+            WHERE event_type = ?
+            """,
+            ("duplicate",)
+        ).fetchone()[0]
 
-        reviews = conn.execute("""
+        reviews = execute_query(
+            conn,
+            """
             SELECT COUNT(*) FROM activity
-            WHERE event_type = 'review'
-        """).fetchone()[0]
+            WHERE event_type = ?
+            """,
+            ("review",)
+        ).fetchone()[0]
 
-    return jsonify({
-        "total_records": total,
-        "unique_records": total,
-        "duplicates_prevented": duplicates,
-        "pending_reviews": reviews,
-        "database_status": "Active"
-    })
+        return jsonify({
+
+            "total_records": total,
+
+            "unique_records": total,
+
+            "duplicates_prevented": duplicates,
+
+            "pending_reviews": reviews,
+
+            "database_status": "Active"
+
+        })
+
+    finally:
+        conn.close()
 
 
-# =====================================
-# DISPLAY ALL RECORDS
-# =====================================
+# ==========================================
+# DISPLAY ALL DATABASE RECORDS
+# ==========================================
 
 @app.route("/api/records")
 def get_records():
 
-    with get_db() as conn:
+    conn = get_db()
 
-        records = conn.execute("""
+    try:
+
+        records = execute_query(
+            conn,
+            """
             SELECT * FROM records
             ORDER BY id DESC
-        """).fetchall()
+            """
+        ).fetchall()
 
-    return jsonify([
-        record_dict(record)
-        for record in records
-    ])
+        return jsonify([
+            record_dict(record)
+            for record in records
+        ])
+
+    finally:
+        conn.close()
 
 
-# =====================================
+# ==========================================
 # ADD AND VERIFY NEW DATA
-# =====================================
+# ==========================================
 
 @app.route("/api/records", methods=["POST"])
 def add_record():
@@ -204,8 +327,12 @@ def add_record():
     data = request.get_json(silent=True) or {}
 
     title = str(data.get("title", "")).strip()
+
     category = str(data.get("category", "")).strip()
-    description = str(data.get("description", "")).strip()
+
+    description = str(
+        data.get("description", "")
+    ).strip()
 
     # STEP 1: VALIDATION
 
@@ -218,11 +345,14 @@ def add_record():
     if not valid:
 
         return jsonify({
+
             "status": "invalid",
+
             "message": message
+
         }), 400
 
-    # STEP 2: EXACT DUPLICATE CHECK
+    # STEP 2: GENERATE FINGERPRINT
 
     fingerprint = generate_fingerprint(
         title,
@@ -230,31 +360,50 @@ def add_record():
         description
     )
 
-    with get_db() as conn:
+    conn = get_db()
 
-        existing = conn.execute("""
+    try:
+
+        # STEP 3: EXACT DUPLICATE CHECK
+
+        existing = execute_query(
+            conn,
+            """
             SELECT * FROM records
             WHERE fingerprint = ?
-        """, (fingerprint,)).fetchone()
+            """,
+            (fingerprint,)
+        ).fetchone()
 
         if existing:
 
-            conn.execute("""
+            execute_query(
+                conn,
+                """
                 INSERT INTO activity(event_type)
                 VALUES(?)
-            """, ("duplicate",))
+                """,
+                ("duplicate",)
+            )
+
+            conn.commit()
 
             return jsonify({
+
                 "status": "duplicate",
+
                 "classification": "Redundant Data",
+
                 "message": "This record already exists."
+
             }), 409
 
-        # STEP 3: SIMILARITY CHECKING
+        # STEP 4: SIMILARITY CHECKING
 
-        records = conn.execute("""
-            SELECT * FROM records
-        """).fetchall()
+        records = execute_query(
+            conn,
+            "SELECT * FROM records"
+        ).fetchall()
 
         for record in records:
 
@@ -273,80 +422,142 @@ def add_record():
                 record["description"]
             )
 
-            # More tolerant title matching
-            # Category and description must also match closely
-
             if (
                 title_score >= 0.80
                 and category_score >= 0.90
                 and description_score >= 0.90
             ):
 
-                conn.execute("""
+                execute_query(
+                    conn,
+                    """
                     INSERT INTO activity(event_type)
                     VALUES(?)
-                """, ("review",))
+                    """,
+                    ("review",)
+                )
+
+                conn.commit()
 
                 return jsonify({
+
                     "status": "review",
+
                     "classification": "Possible Duplicate",
+
                     "message": (
                         "A similar record already exists. "
                         "Manual review is required."
                     ),
+
                     "similarity": {
-                        "title": round(title_score * 100, 2),
-                        "category": round(category_score * 100, 2),
+
+                        "title": round(
+                            title_score * 100, 2
+                        ),
+
+                        "category": round(
+                            category_score * 100, 2
+                        ),
+
                         "description": round(
                             description_score * 100, 2
                         )
+
                     },
+
                     "existing_record": record_dict(record)
+
                 }), 200
 
-        # STEP 4: SAVE UNIQUE VERIFIED DATA
+        # STEP 5: SAVE UNIQUE VERIFIED DATA
 
         try:
 
-            cursor = conn.execute("""
-                INSERT INTO records
-                (title, category, description, fingerprint)
-                VALUES (?, ?, ?, ?)
-            """, (
-                title,
-                category,
-                description,
-                fingerprint
-            ))
+            if DATABASE_URL:
 
-            new_id = cursor.lastrowid
+                cursor = execute_query(
+                    conn,
+                    """
+                    INSERT INTO records
+                    (title, category, description, fingerprint)
+                    VALUES (?, ?, ?, ?)
+                    RETURNING id
+                    """,
+                    (
+                        title,
+                        category,
+                        description,
+                        fingerprint
+                    )
+                )
 
-            saved = conn.execute("""
+                new_id = cursor.fetchone()["id"]
+
+            else:
+
+                cursor = execute_query(
+                    conn,
+                    """
+                    INSERT INTO records
+                    (title, category, description, fingerprint)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        title,
+                        category,
+                        description,
+                        fingerprint
+                    )
+                )
+
+                new_id = cursor.lastrowid
+
+            saved = execute_query(
+                conn,
+                """
                 SELECT * FROM records
                 WHERE id = ?
-            """, (new_id,)).fetchone()
+                """,
+                (new_id,)
+            ).fetchone()
 
-        except sqlite3.IntegrityError:
+            conn.commit()
 
-            return jsonify({
-                "status": "duplicate",
-                "message": "Duplicate record detected."
-            }), 409
+        except Exception:
 
-    return jsonify({
-        "status": "success",
-        "classification": "Unique Verified Data",
-        "message": "Record successfully added!",
-        "record": record_dict(saved)
-    }), 201
+            conn.rollback()
+
+            raise
+
+        return jsonify({
+
+            "status": "success",
+
+            "classification": "Unique Verified Data",
+
+            "message": "Record successfully added!",
+
+            "record": record_dict(saved)
+
+        }), 201
+
+    finally:
+
+        conn.close()
 
 
-# =====================================
-# START APPLICATION
-# =====================================
+# ==========================================
+# APPLICATION START
+# ==========================================
+
+initialize_database()
+
 
 if __name__ == "__main__":
 
-    initialize_database()
-
-    app.run(debug=True)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000)),
+        debug=False
+    )
