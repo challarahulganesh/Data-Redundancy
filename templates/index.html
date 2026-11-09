@@ -1,0 +1,201 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DataGuard | Data Intelligence</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div class="layout">
+    <aside class="sidebar">
+        <div class="brand">
+            <div class="brand-icon">D</div>
+            <div>
+                <h2>DataGuard</h2>
+                <small>DATA INTELLIGENCE</small>
+            </div>
+        </div>
+
+        <p class="menu-label">WORKSPACE</p>
+        <a class="nav active" href="#overview">▦ &nbsp; Overview</a>
+        <a class="nav" href="#add-record">＋ &nbsp; Add New Data</a>
+        <a class="nav" href="#records">▤ &nbsp; Data Records</a>
+
+        <p class="menu-label">MANAGEMENT</p>
+        <a class="nav" href="#analytics">◷ &nbsp; Analytics</a>
+        <a class="nav" href="#activity">◈ &nbsp; System Activity</a>
+
+        <div class="sidebar-bottom">
+            <div class="system-status">
+                <span class="online-dot"></span>
+                System Operational
+            </div>
+            <small>DataGuard v1.0.0</small>
+        </div>
+    </aside>
+
+    <main class="main">
+        <header class="topbar">
+            <div>
+                <h1>Data Overview</h1>
+                <p>Monitor, validate and manage your database.</p>
+            </div>
+            <div class="profile">
+                <div class="avatar">A</div>
+                <div>
+                    <strong>Administrator</strong>
+                    <small>System Admin</small>
+                </div>
+            </div>
+        </header>
+
+        <section id="overview">
+            <div class="welcome">
+                <div>
+                    <span class="eyebrow">DATA MANAGEMENT PLATFORM</span>
+                    <h2>Welcome to DataGuard 👋</h2>
+                    <p>Keep your database clean, accurate and duplicate-free.</p>
+                </div>
+                <div class="welcome-symbol">◈</div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <span class="stat-icon purple">▤</span>
+                    <p>Total Records</p>
+                    <h2 id="totalRecords">0</h2>
+                    <small>Stored in database</small>
+                </div>
+
+                <div class="stat-card">
+                    <span class="stat-icon green">✓</span>
+                    <p>Unique Records</p>
+                    <h2 id="uniqueRecords">0</h2>
+                    <small>Verified entries</small>
+                </div>
+
+                <div class="stat-card">
+                    <span class="stat-icon orange">⛨</span>
+                    <p>Duplicates Prevented</p>
+                    <h2 id="duplicateRecords">0</h2>
+                    <small>Rejected entries</small>
+                </div>
+
+                <div class="stat-card">
+                    <span class="stat-icon blue">◷</span>
+                    <p>Pending Reviews</p>
+                    <h2 id="pendingReviews">0</h2>
+                    <small>Require manual review</small>
+                </div>
+            </div>
+        </section>
+
+        <section class="content-grid">
+            <div class="panel" id="add-record">
+                <div class="panel-heading">
+                    <div>
+                        <h2>Add New Data</h2>
+                        <p>Submit a record for verification.</p>
+                    </div>
+                    <span class="heading-icon">＋</span>
+                </div>
+
+                <form id="recordForm">
+                    <label>Record Title</label>
+                    <input id="title" type="text" placeholder="Enter record title" required maxlength="200">
+
+                    <label>Category</label>
+                    <input id="category" type="text" placeholder="e.g. Technology, Education" required maxlength="100">
+
+                    <label>Description</label>
+                    <textarea id="description" rows="4" placeholder="Enter detailed information..." required maxlength="5000"></textarea>
+
+                    <button type="submit" id="submitBtn">Verify & Add Record →</button>
+                </form>
+
+                <div id="result" class="result hidden"></div>
+            </div>
+
+            <div class="panel" id="analytics">
+                <div class="panel-heading">
+                    <div>
+                        <h2>Database Health</h2>
+                        <p>Live system information.</p>
+                    </div>
+                    <span class="live-label">● LIVE</span>
+                </div>
+
+                <div class="health-box">
+                    <div class="health-icon">✓</div>
+                    <div>
+                        <h3 id="databaseStatus">Active</h3>
+                        <p>Database connection established</p>
+                    </div>
+                </div>
+
+                <div class="health-row">
+                    <span>Unique data entries</span>
+                    <strong id="healthUnique">0</strong>
+                </div>
+                <div class="health-row">
+                    <span>Duplicate protection</span>
+                    <strong class="green-text">Enabled</strong>
+                </div>
+                <div class="health-row">
+                    <span>Validation engine</span>
+                    <strong class="green-text">Active</strong>
+                </div>
+                <div class="health-row">
+                    <span>Storage engine</span>
+                    <strong>SQLite</strong>
+                </div>
+
+                <div class="health-footer">
+                    Your data is being monitored for redundancy.
+                </div>
+            </div>
+        </section>
+
+        <section class="panel records-panel" id="records">
+            <div class="panel-heading">
+                <div>
+                    <h2>Recent Data Records</h2>
+                    <p>View all verified database entries.</p>
+                </div>
+                <button class="refresh-btn" onclick="loadDashboard()">↻ Refresh</button>
+            </div>
+
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>TITLE</th>
+                            <th>CATEGORY</th>
+                            <th>DESCRIPTION</th>
+                            <th>STATUS</th>
+                        </tr>
+                    </thead>
+                    <tbody id="recordsTable">
+                        <tr>
+                            <td colspan="5" class="empty">No records available. Add your first record!</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <footer>
+            DataGuard © 2026 · Intelligent Data Redundancy Removal System
+        </footer>
+    </main>
+</div>
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
